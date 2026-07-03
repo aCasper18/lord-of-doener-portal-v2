@@ -1385,10 +1385,10 @@ function LoginScreen({ onLogin }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [showDemo, setShowDemo] = useState(false);
 
   async function handleLogin() {
     if (!email.trim()) { setError("Bitte E-Mail eingeben."); return; }
+    if (!password.trim()) { setError("Bitte Passwort eingeben."); return; }
     setLoading(true);
     setError("");
     try {
@@ -1400,13 +1400,13 @@ function LoginScreen({ onLogin }) {
       if (res.ok) {
         const data = await res.json();
         onLogin({ ...data.user, isAdmin: data.user.role === "super-admin" || data.user.role === "Super Admin" }, data.token);
+      } else if (res.status === 401) {
+        setError("E-Mail oder Passwort ist falsch.");
       } else {
-        setShowDemo(true);
-        setError("API nicht erreichbar — Demo-Modus verfügbar.");
+        setError("Anmeldung fehlgeschlagen. Bitte später erneut versuchen.");
       }
     } catch {
-      setShowDemo(true);
-      setError("Keine Verbindung zur API — Demo-Modus verfügbar.");
+      setError("Keine Verbindung zum Server. Bitte Internetverbindung prüfen.");
     } finally {
       setLoading(false);
     }
@@ -1460,8 +1460,7 @@ function LoginScreen({ onLogin }) {
         alignItems: "center", justifyContent: "center", padding: "60px 48px",
         background: "#0A0A0A",
       }}>
-        {!showDemo ? (
-          <div style={{ width: "100%" }}>
+        <div style={{ width: "100%" }}>
             <div style={{ marginBottom: 36 }}>
               <div style={{ width: 32, height: 4, background: "#D91B1B", marginBottom: 16 }} />
               <h1 style={{ color: "#fff", fontSize: 28, fontWeight: 800, margin: "0 0 6px 0", letterSpacing: "-0.02em" }}>Anmelden</h1>
@@ -1525,56 +1524,6 @@ function LoginScreen({ onLogin }) {
               {loading ? "Wird angemeldet…" : "Anmelden"}
             </button>
           </div>
-        ) : (
-          <div style={{ width: "100%" }}>
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ width: 32, height: 4, background: "#D91B1B", marginBottom: 16 }} />
-              <h1 style={{ color: "#fff", fontSize: 24, fontWeight: 800, margin: "0 0 6px 0" }}>Demo-Modus</h1>
-              <p style={{ color: "#E05555", fontSize: 12, margin: 0 }}>{error}</p>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {DEMO_USERS.map((u) => (
-                <button
-                  key={u.id}
-                  onClick={() => onLogin(u, null)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 14,
-                    padding: "14px 16px", borderRadius: 6,
-                    border: "1px solid #1E1E1E", background: "#111",
-                    cursor: "pointer", textAlign: "left",
-                    transition: "border-color 0.15s",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.borderColor = "#D91B1B"}
-                  onMouseLeave={(e) => e.currentTarget.style.borderColor = "#1E1E1E"}
-                >
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 4,
-                    background: u.isAdmin ? "#D91B1B" : "#1A1A1A",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "#fff", fontWeight: 800, fontSize: 12, flexShrink: 0,
-                  }}>
-                    {u.initials}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: "#fff", fontWeight: 700, fontSize: 13 }}>{u.name}</div>
-                    <div style={{ color: "#555", fontSize: 11 }}>{u.role}</div>
-                  </div>
-                  {u.isAdmin && (
-                    <div style={{ fontSize: 9, fontWeight: 800, color: "#D91B1B", border: "1px solid #D91B1B33", borderRadius: 3, padding: "2px 6px", letterSpacing: "0.06em" }}>
-                      ADMIN
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => { setShowDemo(false); setError(""); }}
-              style={{ width: "100%", marginTop: 16, background: "none", border: "1px solid #1E1E1E", borderRadius: 6, padding: "12px", color: "#555", fontSize: 13, cursor: "pointer" }}
-            >
-              ← Zurück zum Login
-            </button>
-          </div>
-        )}
 
         <p style={{ color: "#2a2a2a", fontSize: 11, marginTop: 48, textAlign: "center" }}>
           Lord of Döner Franchising GmbH · Köln
