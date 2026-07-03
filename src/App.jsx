@@ -9,7 +9,7 @@ import {
   Server, Link2, Lock, ShieldCheck, Loader2, Unplug, ArrowLeft, CornerDownRight,
   Archive, ArchiveRestore, ListTodo, Award, ChevronUp, ChevronsRight, Inbox,
   Bot, Sparkles, ThumbsUp, ThumbsDown, BookOpen, Send, Trash2, Edit2, FolderOpen,
-  Paperclip, FileUp, CheckCircle2, AlertCircle, Flame,
+  Paperclip, FileUp, CheckCircle2, AlertCircle, Flame, Workflow,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -67,6 +67,7 @@ const NAV = [
   },
   { key: "todos", label: "To Dos", icon: ListTodo, kind: "single" },
   { key: "ki_agent", label: "KI-Agent", icon: Bot, kind: "single" },
+  { key: "workflows", label: "Workflows", icon: Workflow, kind: "single", isNew: true },
   { key: "wissensdatenbank", label: "Wissensdatenbank", icon: Folder, kind: "single" },
   { key: "mails", label: "Mails", icon: Mail, kind: "single" },
   { key: "integrationen", label: "Integrationen", icon: Plug, kind: "single", isNew: true },
@@ -1213,9 +1214,56 @@ function ArchiveView({ tasks, onBack, onRestore }) {
 }
 
 function ToDosView({ currentUser }) {
-  const [tasks, setTasks] = useState(TASKS_INITIAL);
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
+
+  // Tasks aus der Datenbank laden
+  useEffect(() => {
+    fetch(`${API_URL}/tasks`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          // DB-Felder auf Frontend-Format mappen
+          setTasks(data.map((t) => ({
+            id: t.id,
+            title: t.title,
+            note: t.note || "",
+            assignee: t.assignee_id,
+            assigneeName: t.assignee_name,
+            source: t.source || "planner",
+            status: t.archived ? "archived" : (t.status || "open"),
+            createdAt: t.created_at ? t.created_at.slice(0, 10) : "",
+            completedAt: t.completed_at ? t.completed_at.slice(0, 10) : null,
+          })));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Hilfsfunktion: Änderung an einen Task in der DB speichern
+  async function persistTask(id, changes) {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const merged = { ...task, ...changes };
+    try {
+      await fetch(`${API_URL}/tasks/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: merged.title,
+          note: merged.note,
+          assignee_id: merged.assignee,
+          source: merged.source,
+          status: merged.status === "archived" ? "done" : merged.status,
+          completed_at: merged.completedAt || null,
+          archived: merged.status === "archived",
+        }),
+      });
+    } catch {}
+  }
 
   useEffect(() => {
     const working = tasks.filter((t) => t.agentState === "working");
@@ -1250,13 +1298,15 @@ function ToDosView({ currentUser }) {
   }
 
   function approveAgent(id) {
+    const completedAt = new Date().toISOString().slice(0, 10);
     setTasks((prev) =>
       prev.map((t) =>
         t.id === id
-          ? { ...t, agentState: null, agentProposal: null, status: "done", completedAt: new Date().toISOString().slice(0, 10) }
+          ? { ...t, agentState: null, agentProposal: null, status: "done", completedAt }
           : t
       )
     );
+    persistTask(id, { status: "done", completedAt });
   }
 
   function rejectAgent(id) {
@@ -1264,30 +1314,54 @@ function ToDosView({ currentUser }) {
   }
 
   function advance(id) {
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const idx = TASK_COLUMNS.findIndex((c) => c.key === t.status);
-        const next = TASK_COLUMNS[idx + 1];
-        if (!next) return t;
-        return { ...t, status: next.key, completedAt: next.key === "done" ? new Date().toISOString().slice(0, 10) : t.completedAt };
-      })
-    );
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    const idx = TASK_COLUMNS.findIndex((c) => c.key === task.status);
+    const next = TASK_COLUMNS[idx + 1];
+    if (!next) return;
+    const completedAt = next.key === "done" ? new Date().toISOString().slice(0, 10) : task.completedAt;
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status: next.key, completedAt } : t)));
+    persistTask(id, { status: next.key, completedAt });
   }
 
   function archive(id) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status: "archived" } : t)));
+    persistTask(id, { status: "archived" });
   }
 
   function restore(id) {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status: "done" } : t)));
+    persistTask(id, { status: "done" });
   }
 
-  function createTask({ title, assignee, source, note }) {
-    setTasks((prev) => [
-      { id: "t" + (prev.length + 1), title, assignee, source, note, status: "open", createdAt: new Date().toISOString().slice(0, 10), completedAt: null },
-      ...prev,
-    ]);
+  async function createTask({ title, assignee, source, note }) {
+    try {
+      const res = await fetch(`${API_URL}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, note, assignee_id: assignee, source, status: "open" }),
+      });
+      const created = await res.json();
+      setTasks((prev) => [
+        {
+          id: created.id,
+          title: created.title,
+          note: created.note || "",
+          assignee: created.assignee_id,
+          source: created.source || "planner",
+          status: "open",
+          createdAt: created.created_at ? created.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          completedAt: null,
+        },
+        ...prev,
+      ]);
+    } catch {
+      // Fallback lokal
+      setTasks((prev) => [
+        { id: Date.now(), title, assignee, source, note, status: "open", createdAt: new Date().toISOString().slice(0, 10), completedAt: null },
+        ...prev,
+      ]);
+    }
     setShowNew(false);
   }
 
@@ -2452,6 +2526,49 @@ function BenutzerView({ currentUser }) {
   );
 }
 
+function WorkflowsView() {
+  const N8N_URL = "https://n8n-2njq.srv1622720.hstgr.cloud";
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
+      {/* Header */}
+      <div style={{ padding: "20px 32px", borderBottom: "1px solid #151515", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div>
+          <div style={{ width: 28, height: 3, background: "#D91B1B", marginBottom: 10 }} />
+          <h1 style={{ color: "#fff", fontSize: 24, fontWeight: 800, margin: "0 0 2px 0", letterSpacing: "-0.01em" }}>Workflows</h1>
+          <p style={{ color: "#555", fontSize: 13, margin: 0 }}>Automatisierungen per Baukasten erstellen — Auslöser, KI-Schritte und Aktionen verknüpfen.</p>
+        </div>
+        <a
+          href={N8N_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "1px solid #1E1E1E", borderRadius: 6, padding: "9px 14px", color: "#888", fontSize: 12.5, fontWeight: 600, cursor: "pointer", textDecoration: "none" }}
+        >
+          <ArrowUpRight size={14} /> In neuem Tab öffnen
+        </a>
+      </div>
+
+      {/* n8n embed */}
+      <div style={{ flex: 1, position: "relative", background: "#0A0A0A" }}>
+        {!loaded && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, color: "#555" }}>
+            <Loader2 size={28} color="#D91B1B" style={{ animation: "spin 1s linear infinite" }} />
+            <span style={{ fontSize: 13 }}>Workflow-Editor wird geladen…</span>
+          </div>
+        )}
+        <iframe
+          src={N8N_URL}
+          onLoad={() => setLoaded(true)}
+          title="n8n Workflows"
+          style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+          allow="clipboard-read; clipboard-write"
+        />
+      </div>
+    </div>
+  );
+}
+
 function PlaceholderView({ label }) {
   return (
     <div style={{ padding: "32px 36px", fontFamily: "'Helvetica Neue', Arial, sans-serif" }}>
@@ -2503,12 +2620,13 @@ export default function App() {
         {active === "dashboard" && <DashboardView user={currentUser} />}
         {active === "todos" && <ToDosView currentUser={currentUser} />}
         {active === "ki_agent" && <KiAgentView knowledge={knowledge} tasks={sharedTasks} branches={BRANCHES} setKnowledge={setKnowledge} />}
+        {active === "workflows" && <WorkflowsView />}
         {active === "wissensdatenbank" && <WissensdatenbankView entries={knowledge} setEntries={setKnowledge} />}
         {active === "mails" && <MailsView />}
         {active === "integrationen" && <IntegrationenView />}
         {active === "filialen" && <FilialenView />}
         {active === "benutzer" && <BenutzerView currentUser={currentUser} />}
-        {!["dashboard", "todos", "ki_agent", "wissensdatenbank", "mails", "integrationen", "filialen", "benutzer"].includes(active) && (
+        {!["dashboard", "todos", "ki_agent", "workflows", "wissensdatenbank", "mails", "integrationen", "filialen", "benutzer"].includes(active) && (
           <PlaceholderView label={ALL_LABELS[active] || ""} />
         )}
       </div>
