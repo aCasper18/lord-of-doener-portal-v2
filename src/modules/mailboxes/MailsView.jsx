@@ -14,26 +14,6 @@ const IMAP_PRESETS = [
 ];
 
 
-const MAILBOXES_INITIAL = [
-  { id: "mb1", username: "info@lordofdoner.com", host: "outlook.office365.com", port: 993, ssl: true, access: ["u3", "u4"] },
-  { id: "mb2", username: "buchhaltung@lordofdoner.com", host: "outlook.office365.com", port: 993, ssl: true, access: ["u3"] },
-];
-
-const MAIL_SAMPLE = {
-  mb1: [
-    { id: "e1", from: "Lieferando Support <support@lieferando.de>", subject: "Abweichung in der Auszahlung – Filiale Köln-Ehrenfeld", preview: "Bei der letzten Auszahlung ist eine Differenz von 84,20 € aufgetreten, die wir gemeinsam prüfen möchten…", time: "09:14", read: false },
-    { id: "e2", from: "Ruhan Alica <ruhan.alica@gmx.de>", subject: "Frage zur neuen Speisekarte", preview: "Hallo, wann genau wird die neue Karte in Essen ausgerollt? Wir brauchen noch Zeit für die Schilder…", time: "08:47", read: false },
-    { id: "e3", from: "DocuSign <noreply@docusign.net>", subject: "Dokument zur Unterschrift bereit: Anlage 5", preview: "Bünyamin Arslan hat Sie zur Unterzeichnung eines Dokuments eingeladen…", time: "Gestern", read: true },
-    { id: "e4", from: "Mehmet Tosun <mehmet.tosun@web.de>", subject: "Kühlhaus-Ausfall Wiesbaden-Biebrich", preview: "Seit heute Morgen funktioniert die Kühlung nicht richtig, wir brauchen dringend einen Techniker…", time: "Gestern", read: false },
-    { id: "e5", from: "GLS Bank <service@gls.de>", subject: "Kontoauszug Juni 2026", preview: "Ihr Kontoauszug für den Zeitraum 01.06.2026 – 30.06.2026 steht zum Abruf bereit…", time: "Mo", read: true },
-  ],
-  mb2: [
-    { id: "e6", from: "DATEV <service@datev.de>", subject: "Export bereit zur Übernahme", preview: "Der angeforderte Buchungsexport für Juni 2026 steht in Ihrem DATEV-Postfach bereit…", time: "10:02", read: false },
-    { id: "e7", from: "Steuerberatung Klein & Partner", subject: "Rückfrage zu Provisionsrechnung Q2", preview: "Uns ist bei der Prüfung eine Unstimmigkeit bei der Provisionsabrechnung für Mönchengladbach aufgefallen…", time: "Gestern", read: false },
-    { id: "e8", from: "PayPal <service@paypal.de>", subject: "Zahlungseingang bestätigt", preview: "Sie haben eine Zahlung in Höhe von 1.240,00 € erhalten…", time: "Di", read: true },
-  ],
-};
-
 
 function MailboxModal({ mailbox, onClose, onSave, onDelete }) {
   const existing = mailbox;
@@ -197,7 +177,6 @@ function MailboxModal({ mailbox, onClose, onSave, onDelete }) {
 
 
 function MailboxCard({ mailbox, onOpen, onEdit, onManageAccess }) {
-  const unreadCount = (MAIL_SAMPLE[mailbox.id] || []).filter((m) => !m.read).length;
   return (
     <div
       onClick={() => onOpen(mailbox.id)}
@@ -214,11 +193,6 @@ function MailboxCard({ mailbox, onOpen, onEdit, onManageAccess }) {
             {mailbox.host}:{mailbox.port} {mailbox.ssl ? "· SSL" : ""}
           </div>
         </div>
-        {unreadCount > 0 && (
-          <span style={{ background: C.orange, color: "#0A0A0B", fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "2px 8px", flexShrink: 0 }}>
-            {unreadCount} neu
-          </span>
-        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }} onClick={(e) => e.stopPropagation()}>
@@ -247,18 +221,66 @@ function MailboxCard({ mailbox, onOpen, onEdit, onManageAccess }) {
   );
 }
 
+function formatMailTime(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+}
+
 function EmailInboxView({ mailbox, onBack }) {
-  const [emails, setEmails] = useState(MAIL_SAMPLE[mailbox.id] || []);
+  const [emails, setEmails] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
   const [taskCreatedFor, setTaskCreatedFor] = useState(null);
 
-  function markRead(id) {
-    setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, read: true } : e)));
+  function loadEmails() {
+    apiFetch(`/mailboxes/${mailbox.id}/emails`)
+      .then((data) => { if (Array.isArray(data)) setEmails(data); })
+      .catch((err) => console.error("Konnte Mails nicht laden:", err))
+      .finally(() => setLoading(false));
   }
 
-  function createTask(id) {
-    markRead(id);
-    setTaskCreatedFor(id);
-    setTimeout(() => setTaskCreatedFor((cur) => (cur === id ? null : cur)), 2200);
+  usePolling(loadEmails, 30000);
+
+  async function syncNow() {
+    setSyncing(true);
+    setSyncError("");
+    try {
+      await apiFetch(`/mailboxes/${mailbox.id}/sync`, { method: "POST" });
+      loadEmails();
+    } catch (err) {
+      setSyncError(err.message || "IMAP-Sync fehlgeschlagen.");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function markRead(id) {
+    setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, read: true } : e)));
+    try {
+      await apiFetch(`/mailboxes/${mailbox.id}/emails/${id}`, { method: "PUT", body: JSON.stringify({ read: true }) });
+    } catch (err) {
+      console.error(`Mail ${id} konnte nicht als gelesen markiert werden:`, err);
+    }
+  }
+
+  async function createTask(id, mail) {
+    await markRead(id);
+    try {
+      await apiFetch("/tasks", {
+        method: "POST",
+        body: JSON.stringify({ title: mail.subject, note: mail.preview, source: "mail", status: "open" }),
+      });
+      setTaskCreatedFor(id);
+      setTimeout(() => setTaskCreatedFor((cur) => (cur === id ? null : cur)), 2200);
+    } catch (err) {
+      console.error("Aufgabe konnte nicht aus Mail erstellt werden:", err);
+    }
   }
 
   return (
@@ -274,17 +296,27 @@ function EmailInboxView({ mailbox, onBack }) {
         <div style={{ width: 40, height: 40, borderRadius: 10, background: "#1d1d1d", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Mail size={18} color={C.orange} />
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <h1 style={{ color: C.text, fontSize: 24, fontWeight: 800, margin: 0 }}>{mailbox.username}</h1>
           <p style={{ color: C.textDim, fontSize: 12, margin: "2px 0 0 0" }}>
-            {mailbox.host}:{mailbox.port} · {emails.length} Mails im Posteingang (Demo-Daten)
+            {mailbox.host}:{mailbox.port} · {emails.length} Mail(s) im Posteingang
           </p>
         </div>
+        <button
+          onClick={syncNow}
+          disabled={syncing}
+          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: `1px solid ${C.panelBorder}`, borderRadius: 8, padding: "9px 14px", color: C.text, fontSize: 12, fontWeight: 600, cursor: syncing ? "not-allowed" : "pointer" }}
+        >
+          {syncing && <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />}
+          {syncing ? "Synchronisiere…" : "Jetzt synchronisieren"}
+        </button>
       </div>
 
+      {syncError && <div style={{ color: "#E0664B", fontSize: 13, marginBottom: 16 }}>{syncError}</div>}
+
       <div style={{ background: C.panel, border: `1px solid ${C.panelBorder}`, borderRadius: 12, overflow: "hidden" }}>
-        {emails.length === 0 && (
-          <div style={{ padding: "40px 20px", textAlign: "center", color: C.textDim, fontSize: 13 }}>Keine Mails vorhanden.</div>
+        {!loading && emails.length === 0 && (
+          <div style={{ padding: "40px 20px", textAlign: "center", color: C.textDim, fontSize: 13 }}>Keine Mails vorhanden. Klicke "Jetzt synchronisieren", um das Postfach abzurufen.</div>
         )}
         {emails.map((mail, idx) => (
           <div
@@ -302,13 +334,13 @@ function EmailInboxView({ mailbox, onBack }) {
                 <span style={{ color: C.text, fontWeight: mail.read ? 500 : 700, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {mail.from}
                 </span>
-                <span style={{ color: C.textDim, fontSize: 11, flexShrink: 0 }}>{mail.time}</span>
+                <span style={{ color: C.textDim, fontSize: 11, flexShrink: 0 }}>{formatMailTime(mail.time)}</span>
               </div>
               <div style={{ color: C.text, fontSize: 13.5, fontWeight: mail.read ? 400 : 600, margin: "3px 0 4px 0" }}>{mail.subject}</div>
               <div style={{ color: C.textDim, fontSize: 12.5, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{mail.preview}</div>
             </div>
             <button
-              onClick={(e) => { e.stopPropagation(); createTask(mail.id); }}
+              onClick={(e) => { e.stopPropagation(); createTask(mail.id, mail); }}
               style={{
                 display: "flex", alignItems: "center", gap: 5, flexShrink: 0, marginTop: 2,
                 background: taskCreatedFor === mail.id ? "#1d2e1d" : "none",
@@ -324,10 +356,6 @@ function EmailInboxView({ mailbox, onBack }) {
           </div>
         ))}
       </div>
-
-      <p style={{ color: C.textDim, fontSize: 11, marginTop: 16, opacity: 0.6 }}>
-        Demo-Posteingang mit Beispieldaten. Sobald die echte IMAP-Verbindung steht, laufen hier die tatsächlichen Mails auf.
-      </p>
     </div>
   );
 }
