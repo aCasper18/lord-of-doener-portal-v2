@@ -66,7 +66,7 @@ export default function App() {
         {active === "todos" && <ToDosView currentUser={currentUser} />}
         {active === "ki_agent" && <KiAgentView knowledge={knowledge} tasks={sharedTasks} branches={BRANCHES} setKnowledge={setKnowledge} />}
         {active === "workflows" && <WorkflowsView />}
-        {active === "wissensdatenbank" && <WissensdatenbankView entries={knowledge} setEntries={setKnowledge} />}
+        {active === "wissensdatenbank" && <WissensdatenbankView />}
         {active === "mails" && <MailsView />}
         {active === "integrationen" && <IntegrationenView />}
         {active === "filialen" && <FilialenView />}

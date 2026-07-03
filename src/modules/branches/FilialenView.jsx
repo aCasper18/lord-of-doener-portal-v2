@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { X, Plus, MapPin, Phone, ArrowUpRight } from "lucide-react";
 import { C } from "../../shared/theme.js";
 import { StatCard } from "../../shared/components/StatCard.jsx";
-import { BRANCHES } from "../../shared/constants/branches.js";
+import { apiFetch } from "../../api/client.js";
+import { usePolling } from "../../hooks/usePolling.js";
 
 const BRANCH_STATUS = {
   active: { label: "Aktiv", color: C.green },
@@ -73,23 +74,38 @@ function BranchFormModal({ branch, onClose, onSave }) {
 }
 
 export function FilialenView() {
-  const [branches, setBranches] = useState(BRANCHES);
+  const [branches, setBranches] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [modalState, setModalState] = useState(null); // null | "new" | branch object
+  const [error, setError] = useState("");
+
+  function loadBranches() {
+    apiFetch("/branches")
+      .then((data) => { if (Array.isArray(data)) setBranches(data); })
+      .catch((err) => console.error("Konnte Filialen nicht laden:", err))
+      .finally(() => setLoading(false));
+  }
+
+  usePolling(loadBranches, 20000);
 
   const activeCount = branches.filter((b) => b.status === "active").length;
   const inOpeningCount = branches.filter((b) => b.status === "in_eroeffnung").length;
   const pausedCount = branches.filter((b) => b.status === "pausiert").length;
 
-  function saveBranch(data) {
-    if (data.id) {
-      setBranches((prev) => prev.map((b) => (b.id === data.id ? { ...b, ...data } : b)));
-    } else {
-      setBranches((prev) => [
-        ...prev,
-        { ...data, id: "b" + (prev.length + 1), revenue: "—", openedAt: "geplant" },
-      ]);
+  async function saveBranch(data) {
+    setError("");
+    try {
+      if (data.id) {
+        const updated = await apiFetch(`/branches/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
+        setBranches((prev) => prev.map((b) => (b.id === data.id ? updated : b)));
+      } else {
+        const created = await apiFetch("/branches", { method: "POST", body: JSON.stringify(data) });
+        setBranches((prev) => [...prev, created]);
+      }
+      setModalState(null);
+    } catch (err) {
+      setError(err.message || "Filiale konnte nicht gespeichert werden.");
     }
-    setModalState(null);
   }
 
   return (
@@ -106,6 +122,8 @@ export function FilialenView() {
           <Plus size={15} /> Filiale anlegen
         </button>
       </div>
+
+      {error && <div style={{ color: "#E0664B", fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 16, marginBottom: 24, flexWrap: "wrap" }}>
         <StatCard label="Filialen Gesamt" value={String(branches.length)} sub={<span style={{ color: C.textDim }}>Im Netzwerk</span>} />

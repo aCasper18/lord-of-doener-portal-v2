@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Mail, Check, X, Users, Plus, Server, Lock, ShieldCheck, Loader2, Unplug, ArrowLeft, CornerDownRight } from "lucide-react";
 import { C } from "../../shared/theme.js";
 import { AccessModal } from "../../shared/components/AccessModal.jsx";
+import { apiFetch } from "../../api/client.js";
+import { usePolling } from "../../hooks/usePolling.js";
 
 const IMAP_PRESETS = [
   { label: "Eigener / anderer Server", host: "", port: 993 },
@@ -182,7 +184,7 @@ function MailboxModal({ mailbox, onClose, onSave, onDelete }) {
           )}
           <button
             disabled={!canConnect}
-            onClick={() => onSave({ id: existing?.id, host, port, username, ssl })}
+            onClick={() => onSave({ id: existing?.id, host, port, username, ssl, password: password || undefined, provider: IMAP_PRESETS[presetIdx]?.label })}
             style={{ flex: 2, background: canConnect ? C.orange : "#2a2a2a", border: "none", borderRadius: 8, padding: "11px", color: canConnect ? "#0A0A0B" : C.textDim, fontWeight: 700, fontSize: 14, cursor: canConnect ? "pointer" : "not-allowed" }}
           >
             {existing ? "Speichern" : "Verbinden"}
@@ -331,23 +333,56 @@ function EmailInboxView({ mailbox, onBack }) {
 }
 
 export function MailsView() {
-  const [mailboxes, setMailboxes] = useState(MAILBOXES_INITIAL);
+  const [mailboxes, setMailboxes] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [modalState, setModalState] = useState(null); // null | "new" | mailbox object
   const [managingAccess, setManagingAccess] = useState(null); // mailbox id
   const [openInbox, setOpenInbox] = useState(null); // mailbox id
+  const [error, setError] = useState("");
 
-  function saveMailbox(data) {
-    if (data.id) {
-      setMailboxes((prev) => prev.map((m) => (m.id === data.id ? { ...m, ...data } : m)));
-    } else {
-      setMailboxes((prev) => [...prev, { ...data, id: "mb" + (prev.length + 1), access: [] }]);
-    }
-    setModalState(null);
+  // Zugriffsliste (`access`) ist aktuell reine Frontend-Konvenienz, das Backend
+  // kennt kein ACL-Modell pro Mailbox - Zuweisung geht bei Reload verloren.
+  function loadMailboxes() {
+    apiFetch("/mailboxes")
+      .then((data) => {
+        if (!Array.isArray(data)) return;
+        setMailboxes((prev) => {
+          const prevById = new Map(prev.map((m) => [m.id, m]));
+          return data.map((m) => ({ ...m, access: prevById.get(m.id)?.access || [] }));
+        });
+      })
+      .catch((err) => console.error("Konnte Postfaecher nicht laden:", err))
+      .finally(() => setLoading(false));
   }
 
-  function deleteMailbox(id) {
+  usePolling(loadMailboxes, 20000);
+
+  async function saveMailbox(data) {
+    setError("");
+    try {
+      if (data.id) {
+        const updated = await apiFetch(`/mailboxes/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
+        setMailboxes((prev) => prev.map((m) => (m.id === data.id ? { ...m, ...updated } : m)));
+      } else {
+        const created = await apiFetch("/mailboxes", { method: "POST", body: JSON.stringify(data) });
+        setMailboxes((prev) => [...prev, { ...created, access: [] }]);
+      }
+      setModalState(null);
+    } catch (err) {
+      setError(err.message || "Postfach konnte nicht gespeichert werden.");
+    }
+  }
+
+  async function deleteMailbox(id) {
+    const previous = mailboxes;
     setMailboxes((prev) => prev.filter((m) => m.id !== id));
     setModalState(null);
+    try {
+      await apiFetch(`/mailboxes/${id}`, { method: "DELETE" });
+    } catch (err) {
+      console.error(`Postfach ${id} konnte nicht geloescht werden:`, err);
+      setMailboxes(previous);
+    }
   }
 
   function saveAccess(id, access) {
@@ -378,6 +413,8 @@ export function MailsView() {
           <Plus size={15} /> Postfach verbinden
         </button>
       </div>
+
+      {error && <div style={{ color: "#E0664B", fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
       {mailboxes.length === 0 ? (
         <div style={{ background: C.panel, border: `1px dashed ${C.panelBorder}`, borderRadius: 12, padding: "48px 24px", textAlign: "center" }}>

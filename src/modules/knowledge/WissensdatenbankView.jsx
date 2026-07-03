@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { X, Plus, Trash2, Edit2 } from "lucide-react";
 import { C } from "../../shared/theme.js";
+import { apiFetch } from "../../api/client.js";
+import { usePolling } from "../../hooks/usePolling.js";
 
 const KNOWLEDGE_CATEGORIES = ["Franchiseregeln", "Prozesse", "Produkte", "Verträge", "Kontakte", "Allgemein"];
 
@@ -41,22 +43,48 @@ function WissensModal({ entry, onClose, onSave }) {
   );
 }
 
-export function WissensdatenbankView({ entries, setEntries }) {
+export function WissensdatenbankView() {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("Alle");
+  const [error, setError] = useState("");
   const categories = ["Alle", ...KNOWLEDGE_CATEGORIES];
 
-  function save(data) {
-    if (data.id) {
-      setEntries((p) => p.map((e) => (e.id === data.id ? { ...e, ...data } : e)));
-    } else {
-      setEntries((p) => [...p, { ...data, id: "k" + (p.length + 1) }]);
-    }
-    setModal(null);
+  function loadEntries() {
+    apiFetch("/knowledge")
+      .then((data) => { if (Array.isArray(data)) setEntries(data); })
+      .catch((err) => console.error("Konnte Wissensdatenbank nicht laden:", err))
+      .finally(() => setLoading(false));
   }
 
-  function del(id) {
+  usePolling(loadEntries, 20000);
+
+  async function save(data) {
+    setError("");
+    try {
+      if (data.id) {
+        const updated = await apiFetch(`/knowledge/${data.id}`, { method: "PUT", body: JSON.stringify(data) });
+        setEntries((p) => p.map((e) => (e.id === data.id ? updated : e)));
+      } else {
+        const created = await apiFetch("/knowledge", { method: "POST", body: JSON.stringify(data) });
+        setEntries((p) => [created, ...p]);
+      }
+      setModal(null);
+    } catch (err) {
+      setError(err.message || "Eintrag konnte nicht gespeichert werden.");
+    }
+  }
+
+  async function del(id) {
+    const previous = entries;
     setEntries((p) => p.filter((e) => e.id !== id));
+    try {
+      await apiFetch(`/knowledge/${id}`, { method: "DELETE" });
+    } catch (err) {
+      console.error(`Eintrag ${id} konnte nicht geloescht werden:`, err);
+      setEntries(previous);
+    }
   }
 
   const visible = filter === "Alle" ? entries : entries.filter((e) => e.category === filter);
@@ -72,6 +100,8 @@ export function WissensdatenbankView({ entries, setEntries }) {
           <Plus size={15} /> Eintrag hinzufügen
         </button>
       </div>
+
+      {error && <div style={{ color: "#E0664B", fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         {categories.map((c) => (
