@@ -4,9 +4,6 @@ import { C } from "./shared/theme.js";
 import { ALL_LABELS } from "./shared/nav.config.js";
 import { Sidebar } from "./shared/components/Sidebar.jsx";
 import { PlaceholderView } from "./shared/components/PlaceholderView.jsx";
-import { BRANCHES } from "./shared/constants/branches.js";
-import { KNOWLEDGE_INITIAL } from "./shared/constants/knowledge.js";
-import { TASKS_INITIAL } from "./shared/constants/tasks.js";
 
 import { LoginScreen } from "./modules/auth/LoginScreen.jsx";
 import { DashboardView } from "./modules/dashboard/DashboardView.jsx";
@@ -29,8 +26,6 @@ export default function App() {
   const [active, setActive] = useState("dashboard");
   const [openGroups, setOpenGroups] = useState([]);
   const [currentUser, setCurrentUser] = useState(() => (getToken() ? getStoredUser() : null));
-  const [knowledge, setKnowledge] = useState(KNOWLEDGE_INITIAL);
-  const [sharedTasks] = useState(TASKS_INITIAL);
 
   function handleLogin(user, tok) {
     setSession(user, tok);
@@ -65,7 +60,7 @@ export default function App() {
       <div style={{ flex: 1, overflow: "auto" }}>
         {active === "dashboard" && <DashboardView user={currentUser} />}
         {active === "todos" && <ToDosView currentUser={currentUser} />}
-        {active === "ki_agent" && <KiAgentView knowledge={knowledge} tasks={sharedTasks} branches={BRANCHES} setKnowledge={setKnowledge} />}
+        {active === "ki_agent" && <KiAgentView />}
         {active === "workflows" && <WorkflowsView />}
         {active === "wissensdatenbank" && <WissensdatenbankView />}
         {active === "mails" && <MailsView />}

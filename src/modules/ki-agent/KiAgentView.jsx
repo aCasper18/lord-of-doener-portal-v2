@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { Check, X, Store, Loader2, ListTodo, Bot, Sparkles, BookOpen, Send, Paperclip, FileUp, CheckCircle2 } from "lucide-react";
 import { C } from "../../shared/theme.js";
-import { EMPLOYEES } from "../../shared/constants/employees.js";
+import { apiFetch } from "../../api/client.js";
 
-export function KiAgentView({ knowledge, tasks, branches, setKnowledge }) {
+export function KiAgentView() {
   const [messages, setMessages] = useState([
     { role: "assistant", content: "Hallo! Ich bin der Lord of Döner KI-Agent. Ich kenne eure Filialen, offenen Aufgaben und die Wissensdatenbank.\n\nDu kannst mir Dateien hochladen (PDF, TXT, CSV, Excel) — ich extrahiere automatisch alle relevanten Informationen und schlage dir passende Wissenseinträge vor." }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeCtx, setActiveCtx] = useState(["tasks", "branches", "knowledge"]);
+  const [counts, setCounts] = useState({ tasks: 0, branches: 0, knowledge: 0 });
   const [uploadedFile, setUploadedFile] = useState(null); // { name, type, content, b64 }
   const [analyzing, setAnalyzing] = useState(false);
   const fileInputRef = React.useRef(null);
@@ -19,29 +20,26 @@ export function KiAgentView({ knowledge, tasks, branches, setKnowledge }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Nur fuer die Anzeige im Kontext-Panel - der eigentliche Chat-Kontext wird
+  // serverseitig aus der DB gebaut (context-builder.js), nicht aus diesen
+  // Zaehlern. Das ist der Kern des Fixes: der Agent sieht immer Live-Daten,
+  // nicht den Stand vom Laden dieser Seite.
+  useEffect(() => {
+    Promise.all([
+      apiFetch("/tasks").catch(() => []),
+      apiFetch("/branches").catch(() => []),
+      apiFetch("/knowledge").catch(() => []),
+    ]).then(([tasks, branches, knowledge]) => {
+      setCounts({
+        tasks: Array.isArray(tasks) ? tasks.filter((t) => t.status !== "archived").length : 0,
+        branches: Array.isArray(branches) ? branches.length : 0,
+        knowledge: Array.isArray(knowledge) ? knowledge.length : 0,
+      });
+    });
+  }, []);
+
   function toggleCtx(key) {
     setActiveCtx((p) => p.includes(key) ? p.filter((k) => k !== key) : [...p, key]);
-  }
-
-  function buildSystemPrompt() {
-    let sys = `Du bist der interne KI-Agent von Lord of Döner Franchising GmbH, einem Döner-Kebab-Franchise-Unternehmen mit Sitz in Köln. Du hilfst dem Management mit Aufgaben, Analysen und Wissensmanagement. Antworte immer auf Deutsch, präzise und unternehmensbezogen.`;
-    if (activeCtx.includes("branches")) {
-      sys += `\n\nAKTIVE FILIALEN (${branches.length}):\n`;
-      branches.forEach((b) => { sys += `- ${b.name}: ${b.address} | ${b.manager} | ${b.phone}\n`; });
-    }
-    if (activeCtx.includes("tasks")) {
-      const open = tasks.filter((t) => t.status !== "archived");
-      sys += `\n\nOFFENE AUFGABEN:\n`;
-      open.forEach((t) => {
-        const emp = EMPLOYEES.find((e) => e.id === t.assignee);
-        sys += `- [${t.status}] ${t.title} → ${emp?.name || "—"}\n`;
-      });
-    }
-    if (activeCtx.includes("knowledge")) {
-      sys += `\n\nWISSENSDATENBANK:\n`;
-      knowledge.forEach((k) => { sys += `[${k.category}] ${k.title}: ${k.content}\n`; });
-    }
-    return sys;
   }
 
   // ── File reading ─────────────────────────────────────────────────────────
@@ -111,50 +109,14 @@ export function KiAgentView({ knowledge, tasks, branches, setKnowledge }) {
     setMessages((p) => [...p, fileMsg]);
 
     try {
-      const extractPrompt = `Analysiere dieses Dokument sorgfältig und extrahiere ALLE relevanten Informationen als strukturierte Wissenseinträge für die Lord of Döner Franchise-Wissensdatenbank.
+      const payload = uploadedFile.type === "pdf"
+        ? { type: "pdf", base64: uploadedFile.b64, mediaType: uploadedFile.mediaType }
+        : { type: "text", content: uploadedFile.content };
 
-Antworte NUR mit einem JSON-Array, kein Text davor oder danach, keine Markdown-Backticks. Format:
-[
-  {
-    "title": "Kurzer prägnanter Titel",
-    "category": "Franchiseregeln|Prozesse|Produkte|Verträge|Kontakte|Allgemein",
-    "content": "Vollständiger, klarer Inhalt des Eintrags"
-  }
-]
-
-Extrahiere so viele Einträge wie sinnvoll. Jeder Eintrag soll eigenständig verständlich sein. Kategorisiere treffend nach den vorgegebenen Kategorien.`;
-
-      let userContent;
-      if (uploadedFile.type === "text") {
-        // Texte und konvertierte Excel-Dateien → direkt als Text
-        userContent = [
-          { type: "text", text: extractPrompt + "\n\nDokument:\n" + uploadedFile.content.slice(0, 30000) }
-        ];
-      } else if (uploadedFile.type === "pdf") {
-        // PDF → Claude Document API (Base64)
-        userContent = [
-          { type: "document", source: { type: "base64", media_type: "application/pdf", data: uploadedFile.b64 } },
-          { type: "text", text: extractPrompt }
-        ];
-      } else {
-        userContent = [{ type: "text", text: extractPrompt + "\n\nKein lesbarer Inhalt." }];
-      }
-
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const { proposals } = await apiFetch("/ai/extract-document", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 2000,
-          system: "Du bist ein Datenextraktion-Spezialist für Lord of Döner Franchising GmbH. Antworte ausschließlich mit validem JSON.",
-          messages: [{ role: "user", content: userContent }],
-        }),
+        body: JSON.stringify(payload),
       });
-
-      const data = await res.json();
-      const raw = data.content?.[0]?.text || "[]";
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const proposals = JSON.parse(clean);
 
       setMessages((p) =>
         p.map((m) =>
@@ -164,10 +126,11 @@ Extrahiere so viele Einträge wie sinnvoll. Jeder Eintrag soll eigenständig ver
         )
       );
     } catch (err) {
+      console.error("Dokumentenanalyse fehlgeschlagen:", err);
       setMessages((p) =>
         p.map((m) =>
           m.isFileAnalysis && m.status === "loading"
-            ? { ...m, status: "error", proposals: [] }
+            ? { ...m, status: "error", proposals: [], errorMessage: err.message }
             : m
         )
       );
@@ -190,14 +153,21 @@ Extrahiere so viele Einträge wie sinnvoll. Jeder Eintrag soll eigenständig ver
     );
   }
 
-  function importProposals(msg) {
-    const toAdd = msg.proposals
-      .filter((_, i) => msg.accepted.includes(i))
-      .map((p, i) => ({ ...p, id: "k_" + Date.now() + "_" + i }));
-    setKnowledge((prev) => [...prev, ...toAdd]);
-    setMessages((p) =>
-      p.map((m) => (m === msg ? { ...m, status: "imported" } : m))
-    );
+  // Speichert die ausgewaehlten Vorschlaege wirklich in der Wissensdatenbank
+  // (vorher wurde nur ein vom Rest der App losgeloester lokaler State
+  // aktualisiert - importierte Eintraege verschwanden beim Reload wieder).
+  async function importProposals(msg) {
+    const toAdd = msg.proposals.filter((_, i) => msg.accepted.includes(i));
+    try {
+      await Promise.all(
+        toAdd.map((p) => apiFetch("/knowledge", { method: "POST", body: JSON.stringify(p) }))
+      );
+      setCounts((c) => ({ ...c, knowledge: c.knowledge + toAdd.length }));
+      setMessages((p) => p.map((m) => (m === msg ? { ...m, status: "imported" } : m)));
+    } catch (err) {
+      console.error("Wissenseintraege konnten nicht importiert werden:", err);
+      setMessages((p) => p.map((m) => (m === msg ? { ...m, status: "error", errorMessage: err.message } : m)));
+    }
   }
 
   // ── Normal chat send ─────────────────────────────────────────────────────
@@ -210,20 +180,16 @@ Extrahiere so viele Einträge wie sinnvoll. Jeder Eintrag soll eigenständig ver
     setMessages((p) => [...p, userMsg]);
     setLoading(true);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const { content } = await apiFetch("/ai/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          system: buildSystemPrompt(),
           messages: history.map((m) => ({ role: m.role, content: m.content })),
+          context: activeCtx,
         }),
       });
-      const data = await res.json();
-      setMessages((p) => [...p, { role: "assistant", content: data.content?.[0]?.text || "Keine Antwort." }]);
-    } catch {
-      setMessages((p) => [...p, { role: "assistant", content: "Verbindungsfehler." }]);
+      setMessages((p) => [...p, { role: "assistant", content: content || "Keine Antwort." }]);
+    } catch (err) {
+      setMessages((p) => [...p, { role: "assistant", content: err.message || "Verbindungsfehler." }]);
     } finally {
       setLoading(false);
     }
@@ -254,9 +220,9 @@ Extrahiere so viele Einträge wie sinnvoll. Jeder Eintrag soll eigenständig ver
 
         <div style={{ marginTop: 16, padding: "12px", background: C.panel, border: `1px solid ${C.panelBorder}`, borderRadius: 9 }}>
           <div style={{ color: C.textDim, fontSize: 10.5, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase" }}>Aktiver Kontext</div>
-          {activeCtx.includes("branches") && <div style={{ color: C.text, fontSize: 11.5, marginBottom: 3 }}>✓ {branches.length} Filialen</div>}
-          {activeCtx.includes("tasks") && <div style={{ color: C.text, fontSize: 11.5, marginBottom: 3 }}>✓ {tasks.filter((t) => t.status !== "archived").length} Aufgaben</div>}
-          {activeCtx.includes("knowledge") && <div style={{ color: C.text, fontSize: 11.5 }}>✓ {knowledge.length} Wissenseinträge</div>}
+          {activeCtx.includes("branches") && <div style={{ color: C.text, fontSize: 11.5, marginBottom: 3 }}>✓ {counts.branches} Filialen</div>}
+          {activeCtx.includes("tasks") && <div style={{ color: C.text, fontSize: 11.5, marginBottom: 3 }}>✓ {counts.tasks} Aufgaben</div>}
+          {activeCtx.includes("knowledge") && <div style={{ color: C.text, fontSize: 11.5 }}>✓ {counts.knowledge} Wissenseinträge</div>}
         </div>
 
         <div style={{ marginTop: 12, padding: "11px 12px", background: "#0D1A14", border: `1px solid #1a3a2a`, borderRadius: 9 }}>
