@@ -1,4 +1,4 @@
-import { Home, Boxes, Receipt, ShoppingCart, Settings, Calculator, Cog, TrendingUp, Plug, Mail, Users, BarChart3, Trophy, Tag, Package, FileText, Wallet, Bell, Percent, FileSpreadsheet, AlertTriangle, Store, Building2, Truck, CreditCard, Folder, BarChart2, ListTodo, Bot, Workflow } from "lucide-react";
+import { Home, Boxes, Receipt, ShoppingCart, Settings, Calculator, Cog, TrendingUp, Plug, Mail, MessageCircle, Users, BarChart3, Trophy, Tag, Package, FileText, Wallet, Bell, Percent, FileSpreadsheet, AlertTriangle, Store, Building2, Truck, CreditCard, Folder, BarChart2, ListTodo, Bot, Workflow } from "lucide-react";
 
 export const NAV = [
   { key: "dashboard", label: "Dashboard", icon: Home, kind: "single" },
@@ -38,6 +38,7 @@ export const NAV = [
   { key: "workflows", label: "Workflows", icon: Workflow, kind: "single", isNew: true },
   { key: "wissensdatenbank", label: "Wissensdatenbank", icon: Folder, kind: "single" },
   { key: "mails", label: "Mails", icon: Mail, kind: "single" },
+  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, kind: "single", isNew: true },
   { key: "integrationen", label: "Integrationen", icon: Plug, kind: "single", isNew: true },
   {
     key: "verwaltung", label: "Verwaltung", icon: Settings, kind: "group",

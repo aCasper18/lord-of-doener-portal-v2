@@ -15,13 +15,14 @@ import { KiAgentView } from "./modules/ki-agent/KiAgentView.jsx";
 import { WorkflowsView } from "./modules/workflows/WorkflowsView.jsx";
 import { WissensdatenbankView } from "./modules/knowledge/WissensdatenbankView.jsx";
 import { MailsView } from "./modules/mailboxes/MailsView.jsx";
+import { WhatsAppView } from "./modules/whatsapp/WhatsAppView.jsx";
 import { IntegrationenView } from "./modules/integrations/IntegrationenView.jsx";
 import { FilialenView } from "./modules/branches/FilialenView.jsx";
 import { BenutzerView } from "./modules/users/BenutzerView.jsx";
 
 const ROUTED_KEYS = [
   "dashboard", "todos", "ki_agent", "workflows", "wissensdatenbank",
-  "mails", "integrationen", "filialen", "benutzer",
+  "mails", "whatsapp", "integrationen", "filialen", "benutzer",
 ];
 
 export default function App() {
@@ -68,6 +69,7 @@ export default function App() {
         {active === "workflows" && <WorkflowsView />}
         {active === "wissensdatenbank" && <WissensdatenbankView />}
         {active === "mails" && <MailsView />}
+        {active === "whatsapp" && <WhatsAppView />}
         {active === "integrationen" && <IntegrationenView />}
         {active === "filialen" && <FilialenView />}
         {active === "benutzer" && <BenutzerView currentUser={currentUser} />}
